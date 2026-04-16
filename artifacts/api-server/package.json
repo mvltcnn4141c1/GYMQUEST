@@ -1,0 +1,41 @@
+{
+  "name": "@workspace/api-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && npm run start",
+    "build": "node ./build.mjs",
+    "start": "node --enable-source-maps ./dist/index.mjs",
+    "db:bootstrap": "node ./scripts/bootstrap-core-tables.mjs",
+    "db:push": "npm run db:bootstrap",
+    "db:backfill:tier": "node ./scripts/backfill-character-tiers.mjs",
+    "db:seed:quests": "node ./scripts/seed-quests.mjs",
+    "db:seed:items": "node ./scripts/seed-items.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@workspace/api-zod": "file:../api-zod",
+    "@workspace/db": "file:../db",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.44.7",
+    "express": "^5",
+    "pg": "^8.20.0",
+    "pino": "^9",
+    "pino-http": "^10",
+    "stripe-replit-sync": "^1.0.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.5.2",
+    "esbuild": "0.25.8",
+    "esbuild-plugin-pino": "^2.3.3",
+    "pino-pretty": "^13",
+    "thread-stream": "3.1.0"
+  }
+}
