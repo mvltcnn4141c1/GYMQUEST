@@ -76,6 +76,8 @@ export default function LevelUpScreen() {
             league={character.league as LeagueTier}
             streakActive={character.streakActive}
             equippedAura={character.equippedAura}
+            equippedShakerTier={character.equippedShakerTier ?? 0}
+            isTurboActive={Boolean(character.isTurboActive)}
             size={200}
             showTierLabel
           />

@@ -275,6 +275,8 @@ export default function HomeScreen() {
               tier={tierRaw}
               streakActive={character.streakActive}
               equippedAura={character.equippedAura}
+              equippedShakerTier={character.equippedShakerTier ?? 0}
+              isTurboActive={Boolean(character.isTurboActive)}
               size={130}
               showTierLabel={false}
               forceTier3={eliteTierActive}

@@ -22,8 +22,78 @@ export function calcExpToNextLevel(level: number): number {
   return Math.floor(150 * Math.pow(1.1, level - 1));
 }
 
-export function processLevelUp(currentExp: number, currentLevel: number, xpGained: number, maxLevel = 100) {
-  let newExp = currentExp + xpGained;
+function getCharacterLocalDate(utcDate: Date, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(utcDate);
+  } catch {
+    return utcDate.toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * Son antrenmanın takvim günü ile bugün aynı değilse (veya hiç yoksa) bir sonraki antrenman günlük turbo'ya uygundur.
+ */
+export function isDailyTurboEligible(
+  lastWorkoutDate: Date | string | null | undefined,
+  lastWorkoutAtFallback: Date | string | null | undefined,
+  timezone: string,
+  now: Date = new Date(),
+): boolean {
+  const pivot = lastWorkoutDate ?? lastWorkoutAtFallback;
+  if (pivot == null) return true;
+  const tz = timezone || "UTC";
+  const today = getCharacterLocalDate(now, tz);
+  const last = getCharacterLocalDate(new Date(pivot as any), tz);
+  return last !== today;
+}
+
+export type ProcessLevelUpOptions = {
+  maxLevel?: number;
+  /** O günkü ilk antrenman: gelen XP'ye %10 eklenir (aşağı yuvarlanır). */
+  applyDailyTurbo?: boolean;
+};
+
+export type ProcessLevelUpResult = {
+  newExp: number;
+  newLevel: number;
+  leveledUp: boolean;
+  /** Seviye hesabına giren (turbo sonrası) XP */
+  effectiveXpGained: number;
+  dailyTurboApplied: boolean;
+};
+
+function normalizeProcessLevelUpFourth(
+  fourth?: number | ProcessLevelUpOptions,
+): { maxLevel: number; applyDailyTurbo: boolean } {
+  if (fourth == null) return { maxLevel: 100, applyDailyTurbo: false };
+  if (typeof fourth === "number") return { maxLevel: fourth, applyDailyTurbo: false };
+  return {
+    maxLevel: fourth.maxLevel ?? 100,
+    applyDailyTurbo: Boolean(fourth.applyDailyTurbo),
+  };
+}
+
+export function processLevelUp(
+  currentExp: number,
+  currentLevel: number,
+  xpGained: number,
+  fourth?: number | ProcessLevelUpOptions,
+): ProcessLevelUpResult {
+  const { maxLevel, applyDailyTurbo } = normalizeProcessLevelUpFourth(fourth);
+
+  let adjustedXp = xpGained;
+  let dailyTurboApplied = false;
+  if (applyDailyTurbo && adjustedXp > 0) {
+    adjustedXp = Math.floor(adjustedXp * 1.1);
+    dailyTurboApplied = true;
+  }
+
+  let newExp = currentExp + adjustedXp;
   let level = currentLevel;
   let leveledUp = false;
   let expNeeded = calcExpToNextLevel(level);
@@ -35,7 +105,13 @@ export function processLevelUp(currentExp: number, currentLevel: number, xpGaine
     expNeeded = calcExpToNextLevel(level);
   }
 
-  return { newExp, newLevel: level, leveledUp };
+  return {
+    newExp,
+    newLevel: level,
+    leveledUp,
+    effectiveXpGained: adjustedXp,
+    dailyTurboApplied,
+  };
 }
 
 export function calcStats(level: number, charClass: string) {
@@ -94,7 +170,24 @@ router.get("/character", authenticateUser, async (req, res) => {
     ? new Date(char.streakActiveUntil) > new Date()
     : false;
 
-  res.json({ ...char, expToNextLevel, league, streakActive, isAdmin: isDebugUser(char.name), isDebugUser: isDebugUser(char.name) });
+  const tz = String(char.timezone || "UTC");
+  const isTurboActive = isDailyTurboEligible(
+    char.lastWorkoutDate,
+    char.lastWorkoutAt,
+    tz,
+    new Date(),
+  );
+
+  res.json({
+    ...char,
+    expToNextLevel,
+    league,
+    streakActive,
+    isAdmin: isDebugUser(char.name),
+    isDebugUser: isDebugUser(char.name),
+    equippedShakerTier: Number(char.equippedShakerTier ?? 0),
+    isTurboActive,
+  });
 });
 
 router.post("/character", async (req, res) => {

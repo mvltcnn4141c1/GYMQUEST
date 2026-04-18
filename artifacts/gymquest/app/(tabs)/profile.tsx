@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -312,6 +312,8 @@ export default function ProfileScreen() {
   const ownedEquipment = (storeData?.itemCatalog || []).filter((item) => (storeData?.ownedItemIds || []).includes(item.id));
   const isDebugUser = Boolean((character as any)?.isDebugUser || (character as any)?.isAdmin);
   const equippedAuraLabel = character?.equippedAura ? (AURA_LABELS[String(character.equippedAura)] || String(character.equippedAura)) : null;
+  const [debugGrantBusy, setDebugGrantBusy] = useState(false);
+  const debugGrantLock = useRef(false);
 
   React.useEffect(() => {
     setInstagramUrl(String((character as any)?.instagramUrl || ''));
@@ -319,13 +321,21 @@ export default function ProfileScreen() {
   }, [character]);
 
   const handleDebugGrant = async (action: 'xp' | 'level') => {
-    const res = await apiPost<any>('/character/admin-grant', { action });
-    if (!res.ok) {
-      Alert.alert('Hata', res.error || 'Debug islemi basarisiz');
-      return;
+    if (debugGrantLock.current) return;
+    debugGrantLock.current = true;
+    setDebugGrantBusy(true);
+    try {
+      const res = await apiPost<any>('/character/admin-grant', { action });
+      if (!res.ok) {
+        Alert.alert('Hata', res.error || 'Debug islemi basarisiz');
+        return;
+      }
+      await refreshCharacter();
+      queryClient.invalidateQueries({ queryKey: ['character', userId] });
+    } finally {
+      debugGrantLock.current = false;
+      setDebugGrantBusy(false);
     }
-    await refreshCharacter();
-    queryClient.invalidateQueries({ queryKey: ['character', userId] });
   };
 
   const handleSaveProfile = async () => {
@@ -390,6 +400,8 @@ export default function ProfileScreen() {
           league={character.league as LeagueTier}
           streakActive={character.streakActive}
           equippedAura={character.equippedAura}
+          equippedShakerTier={character.equippedShakerTier ?? 0}
+          isTurboActive={Boolean(character.isTurboActive)}
           tier={character.tier}
           size={260}
           variant="hero"
@@ -435,11 +447,19 @@ export default function ProfileScreen() {
       </TouchableOpacity>
       {isDebugUser ? (
         <View style={styles.debugActions}>
-          <TouchableOpacity style={styles.debugBtn} onPress={() => handleDebugGrant('xp')}>
+          <TouchableOpacity
+            style={styles.debugBtn}
+            disabled={debugGrantBusy}
+            onPress={() => handleDebugGrant('xp')}
+          >
             <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.gold} />
             <Text style={styles.debugBtnText}>+5000 XP</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.debugBtn} onPress={() => handleDebugGrant('level')}>
+          <TouchableOpacity
+            style={styles.debugBtn}
+            disabled={debugGrantBusy}
+            onPress={() => handleDebugGrant('level')}
+          >
             <MaterialCommunityIcons name="arrow-up-bold-circle" size={14} color={COLORS.success} />
             <Text style={styles.debugBtnText}>+1 Level</Text>
           </TouchableOpacity>

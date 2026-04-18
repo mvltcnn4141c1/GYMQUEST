@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, Animated, Easing } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image as ExpoImage } from "expo-image";
@@ -17,6 +17,10 @@ type Props = {
   tier?: CharacterTier;
   variant?: "compact" | "hero";
   forceTier3?: boolean;
+  /** 0: yok, 1: plastik, 2: çelik, 3: altın shaker (assets/avatars) */
+  equippedShakerTier?: number;
+  /** Sonraki antrenmanda günlük turbo (+10% XP) uygulanacaksa */
+  isTurboActive?: boolean;
 };
 
 const TIER_IMAGE_SVG: Record<string, string> = {
@@ -139,6 +143,15 @@ const AVATAR_BY_CLASS_AND_TIER = {
   },
 } as const;
 
+/** Shaker overlay: false yaparsan katman cizilmez (require'lar yine paketlenir). */
+const USE_SHAKER_ASSETS = true;
+
+const SHAKER_SOURCES = {
+  1: require("../assets/avatars/shaker-tier-1.png"),
+  2: require("../assets/avatars/shaker-tier-2.png"),
+  3: require("../assets/avatars/shaker-tier-3.png"),
+} as const;
+
 function resolveAvatarTier(level: number): 1 | 2 | 3 {
   if (level >= 21) return 3;
   if (level >= 11) return 2;
@@ -182,15 +195,19 @@ export function CharacterImage({
   showTierLabel = false,
   variant = "compact",
   forceTier3 = false,
+  equippedShakerTier = 0,
+  isTurboActive = false,
 }: Props) {
   const { highGraphicsEnabled, lowPerformanceDevice } = useGame();
   const graphicsScale = (!highGraphicsEnabled || lowPerformanceDevice) ? 0.3 : 1;
   const pulseAnim = useMemo(() => new Animated.Value(0), []);
   const evolveAnim = useMemo(() => new Animated.Value(1), []);
+  const turboPulse = useMemo(() => new Animated.Value(0), []);
   const [primaryImageFailed, setPrimaryImageFailed] = useState(false);
   const [fallbackImageFailed, setFallbackImageFailed] = useState(false);
   const [displayAvatarSource, setDisplayAvatarSource] = useState<any>(null);
   const [incomingAvatarSource, setIncomingAvatarSource] = useState<any>(null);
+  const prevAvatarClassRef = useRef<string | null>(null);
   const color = CLASS_COLORS[characterClass] || COLORS.gold;
   const tierKey = String(tier || "common").toLowerCase();
   const tierRingColor = TIER_IMAGE_SVG[tierKey] || TIER_IMAGE_SVG.common;
@@ -221,6 +238,18 @@ export function CharacterImage({
   }, [classKey, level]);
 
   useEffect(() => {
+    const prev = prevAvatarClassRef.current;
+    if (prev != null && prev !== avatarClass) {
+      setPrimaryImageFailed(false);
+      setFallbackImageFailed(false);
+      setIncomingAvatarSource(null);
+      evolveAnim.setValue(1);
+      setDisplayAvatarSource(AVATAR_BY_CLASS_AND_TIER[avatarClass][avatarTier]);
+    }
+    prevAvatarClassRef.current = avatarClass;
+  }, [avatarClass, avatarTier, evolveAnim]);
+
+  useEffect(() => {
     if (!displayAvatarSource) {
       setDisplayAvatarSource(targetAvatarSource);
       return;
@@ -240,6 +269,31 @@ export function CharacterImage({
       }
     });
   }, [displayAvatarSource, targetAvatarSource, evolveAnim]);
+
+  useEffect(() => {
+    if (!isTurboActive) {
+      turboPulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(turboPulse, {
+          toValue: 1,
+          duration: 1100,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(turboPulse, {
+          toValue: 0,
+          duration: 1100,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isTurboActive, turboPulse]);
 
   useEffect(() => {
     if (!highGraphicsEnabled || lowPerformanceDevice) {
@@ -301,6 +355,23 @@ export function CharacterImage({
     outputRange: [0.18, Math.min(0.6, glowPreset.opacity + 0.08)],
   });
 
+  const shakerTier = Math.min(3, Math.max(0, Math.floor(Number(equippedShakerTier) || 0)));
+  const shakerSource =
+    USE_SHAKER_ASSETS && shakerTier > 0 ? SHAKER_SOURCES[shakerTier as 1 | 2 | 3] : null;
+  const shakerSize = size * (isHero ? 0.34 : 0.36);
+  const turboRingOpacity = turboPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.22, 0.48],
+  });
+  const turboRingScale = turboPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.045],
+  });
+  const turboBadgeOpacity = turboPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.85, 1],
+  });
+
   const handleAvatarImageError = () => {
     if (!primaryImageFailed) {
       setPrimaryImageFailed(true);
@@ -316,11 +387,27 @@ export function CharacterImage({
 
   return (
     <View style={[styles.wrap, { width: size, height: containerHeight }]}>
+      {isTurboActive ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.turboBackRing,
+            {
+              width: size * 1.14,
+              height: size * 1.14,
+              top: isHero ? size * 0.06 : size * 0.02,
+              opacity: turboRingOpacity,
+              transform: [{ scale: turboRingScale }],
+            },
+          ]}
+        />
+      ) : null}
       <Animated.View
         pointerEvents="none"
         style={[
           styles.tierPulseGlow,
           {
+            zIndex: 2,
             width: isHero ? size * 1.06 : size * 1.2,
             height: isHero ? size * 1.06 : size * 1.2,
             borderColor: `${glowMixColor}99`,
@@ -339,6 +426,7 @@ export function CharacterImage({
         style={[
           styles.innerBreathGlow,
           {
+            zIndex: 3,
             width: isHero ? size * 0.94 : size * 0.98,
             height: isHero ? size * 0.94 : size * 0.98,
             backgroundColor: `${glowMixColor}33`,
@@ -355,6 +443,7 @@ export function CharacterImage({
           style={[
             styles.tier3ConquerorAura,
             {
+              zIndex: 4,
               width: isHero ? size * 1.22 : size * 1.28,
               height: isHero ? size * 1.22 : size * 1.28,
               borderColor: `${glowMixColor}DD`,
@@ -371,6 +460,7 @@ export function CharacterImage({
           style={[
             styles.auraGlow,
             {
+              zIndex: 4,
               width: isHero ? size * 1.14 : size * 1.2,
               height: isHero ? size * 1.14 : size * 1.2,
               borderColor: `${auraFxColor}CC`,
@@ -391,6 +481,7 @@ export function CharacterImage({
           style={[
             styles.leagueAura,
             {
+              zIndex: 5,
               width: isHero ? size * 1.03 : size * 1.1,
               height: isHero ? size * 1.03 : size * 1.1,
               borderColor: `${leagueAura}77`,
@@ -405,6 +496,7 @@ export function CharacterImage({
         style={[
           styles.circle,
           {
+            zIndex: 10,
             borderColor: tierRingColor,
             shadowColor: tierRingColor,
             shadowOpacity: (isHero ? 0.32 : 0.25) * graphicsScale,
@@ -420,6 +512,7 @@ export function CharacterImage({
           <View style={{ width: size * imageSizeRatio, height: size * imageSizeRatio }}>
             <Animated.View style={[styles.crossFadeLayer, { opacity: incomingAvatarSource ? 1 : evolveAnim }]}>
               <ExpoImage
+                key={`avatar-out-${avatarClass}-${avatarTier}`}
                 source={avatarImageSource}
                 style={[
                   styles.rankImage,
@@ -433,12 +526,14 @@ export function CharacterImage({
                 contentPosition="center"
                 transition={120}
                 priority="high"
+                cachePolicy="memory-disk"
                 onError={handleAvatarImageError}
               />
             </Animated.View>
             {incomingAvatarSource ? (
               <Animated.View style={[styles.crossFadeLayer, { opacity: evolveAnim }]}>
                 <ExpoImage
+                  key={`avatar-in-${avatarClass}-${avatarTier}`}
                   source={incomingAvatarSource}
                   style={[
                     styles.rankImage,
@@ -452,6 +547,7 @@ export function CharacterImage({
                   contentPosition="center"
                   transition={150}
                   priority="high"
+                  cachePolicy="memory-disk"
                 />
               </Animated.View>
             ) : null}
@@ -484,6 +580,7 @@ export function CharacterImage({
           style={[
             styles.auraForegroundRing,
             {
+              zIndex: 22,
               width: isHero ? size * 1.01 : size * 1.04,
               height: isHero ? size * 1.01 : size * 1.04,
               borderColor: auraFxColor,
@@ -494,16 +591,66 @@ export function CharacterImage({
         />
       ) : null}
       {isHero ? (
-        <View style={styles.heroLabelStack}>
+        <View style={[styles.heroLabelStack, { zIndex: 25 }]}>
           {showTierLabel ? <Text style={[styles.tierLabelHero, { color: tierRingColor }]}>{tierKey.toUpperCase()}</Text> : null}
           <Text style={[styles.stageLabel, { color: glowMixColor }]}>{stageLabel}</Text>
         </View>
       ) : (
-        <>
+        <View style={[styles.compactLabelStack, { zIndex: 25 }]}>
           {showTierLabel ? <Text style={[styles.tierLabel, { color: tierRingColor }]}>{tierKey.toUpperCase()}</Text> : null}
           <Text style={styles.lvl}>Lv.{level}</Text>
-        </>
+        </View>
       )}
+      {shakerSource ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.shakerLayer,
+            {
+              width: shakerSize,
+              height: shakerSize,
+              left: isHero ? 6 : 4,
+              bottom: isHero ? (size * 0.14 + 8) : size * 0.08 + 6,
+            },
+          ]}
+        >
+          {shakerTier === 3 ? (
+            <View style={styles.shakerGoldGlowShell}>
+              <ExpoImage
+                source={shakerSource}
+                style={[styles.shakerImage, { width: shakerSize, height: shakerSize }]}
+                contentFit="contain"
+                cachePolicy="memory-disk"
+              />
+            </View>
+          ) : (
+            <ExpoImage
+              source={shakerSource}
+              style={[styles.shakerImage, { width: shakerSize, height: shakerSize }]}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+          )}
+        </View>
+      ) : null}
+      {isTurboActive ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.turboBadgeWrap,
+            {
+              top: isHero ? size * 0.1 : 6,
+              right: 2,
+              opacity: turboBadgeOpacity,
+            },
+          ]}
+        >
+          <View style={styles.turboBadge}>
+            <MaterialCommunityIcons name="lightning-bolt" size={11} color="#1a0f00" />
+            <Text style={styles.turboBadgeText}>x1.1</Text>
+          </View>
+        </Animated.View>
+      ) : null}
     </View>
   );
 }
@@ -512,6 +659,66 @@ export const CharacterAvatar = CharacterImage;
 
 const styles = StyleSheet.create({
   wrap: { alignItems: "center", justifyContent: "center" },
+  compactLabelStack: {
+    alignItems: "center",
+    width: "100%",
+  },
+  turboBackRing: {
+    position: "absolute",
+    alignSelf: "center",
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: "rgba(255, 120, 40, 0.55)",
+    backgroundColor: "#00000000",
+    zIndex: 1,
+    shadowColor: "#FF7A2E",
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  shakerLayer: {
+    position: "absolute",
+    zIndex: 43,
+    elevation: 24,
+    justifyContent: "flex-end",
+    alignItems: "flex-start",
+  },
+  shakerImage: {
+    borderRadius: 8,
+  },
+  shakerGoldGlowShell: {
+    borderRadius: 12,
+    padding: 2,
+    backgroundColor: "#00000000",
+    shadowColor: "#FFB84D",
+    shadowOpacity: 0.95,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 10,
+  },
+  turboBadgeWrap: {
+    position: "absolute",
+    zIndex: 46,
+    elevation: 26,
+  },
+  turboBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 140, 60, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 200, 120, 0.95)",
+  },
+  turboBadgeText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#1a0f00",
+    letterSpacing: 0.2,
+  },
   tierPulseGlow: {
     position: "absolute",
     borderRadius: 999,

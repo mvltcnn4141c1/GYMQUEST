@@ -45,6 +45,10 @@ export interface Character {
   totalXpEarned?: number;
   totalCalories?: number;
   lastWorkoutAt?: string | null;
+  lastWorkoutDate?: string | null;
+  /** Sonraki antrenmanda günlük turbo (+10% XP) uygulanır mı */
+  isTurboActive?: boolean;
+  equippedShakerTier?: number;
   streakDays: number;
   streakActive: boolean;
   equippedAura?: string | null;
@@ -173,6 +177,9 @@ function mapCharacter(raw: Record<string, unknown>): Character {
     totalXpEarned: Number(raw.totalXpEarned ?? raw.totalExp ?? 0),
     totalCalories: Number(raw.totalCalories ?? 0),
     lastWorkoutAt: (raw.lastWorkoutAt ?? raw.last_workout_at) as string | null | undefined,
+    lastWorkoutDate: (raw.lastWorkoutDate ?? raw.last_workout_date ?? null) as string | null | undefined,
+    isTurboActive: raw.isTurboActive !== undefined ? Boolean(raw.isTurboActive) : undefined,
+    equippedShakerTier: Number(raw.equippedShakerTier ?? raw.equipped_shaker_tier ?? 0),
     streakDays: Number(raw.streakDays ?? raw.questStreak ?? 0),
     streakActive: Boolean(raw.streakActive),
     equippedAura: (

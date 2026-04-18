@@ -7,7 +7,7 @@ import {
   purchasesTable,
 } from "@workspace/db/schema";
 import { eq, desc, and, inArray, gte, sql } from "drizzle-orm";
-import { calcExpToNextLevel, calcStats, calcLeague, processLevelUp } from "./character.js";
+import { calcExpToNextLevel, calcStats, calcLeague, processLevelUp, isDailyTurboEligible } from "./character.js";
 import { calcTierByLevel } from "../constants/tiers.js";
 import { XP_MULTIPLIER } from "../constants/xp.js";
 import { getActiveBoostMultiplier } from "./store.js";
@@ -837,7 +837,27 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
     const softCapResult = applySoftCap(finalXpAwarded, effectiveDailyCount);
     finalXpAwarded = softCapResult.xp;
 
-    const rawCoinCalc = finalXpAwarded > 0 ? Math.max(1, Math.floor(finalXpAwarded * COINS_PER_XP)) : 0;
+    const currentXp = Number(charCheck.xp ?? charCheck.exp ?? 0);
+    const currentLevel = Number(charCheck.level ?? 1);
+    const currentWeeklyXp = Number(charCheck.weekly_xp ?? charCheck.weeklyXp ?? 0);
+    const currentCoins = Number(charCheck.gym_coins ?? charCheck.gymCoins ?? 0);
+    const charClass = String(charCheck.class || "fighter");
+
+    const turboEligible = isDailyTurboEligible(
+      charCheck.last_workout_date ?? charCheck.lastWorkoutDate,
+      charCheck.last_workout_at ?? charCheck.lastWorkoutAt,
+      tz,
+      now,
+    );
+    const lv = processLevelUp(currentXp, currentLevel, finalXpAwarded, {
+      applyDailyTurbo: turboEligible && finalXpAwarded > 0,
+    });
+    const effectiveXpEarned = lv.effectiveXpGained;
+    if (lv.dailyTurboApplied) {
+      warnings.push("Gunluk turbo: Ilk antrenman — +%10 XP");
+    }
+
+    const rawCoinCalc = effectiveXpEarned > 0 ? Math.max(1, Math.floor(effectiveXpEarned * COINS_PER_XP)) : 0;
     const warningsJson = warnings.length > 0 ? JSON.stringify(warnings) : null;
 
     const [workout] = await tx.insert(workoutsTable).values({
@@ -847,19 +867,12 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
       reps: r,
       durationSec: d,
       intensity: isPendingApproval ? "pending" : workoutMode,
-      earnedXp: finalXpAwarded,
+      earnedXp: effectiveXpEarned,
       earnedCoins: rawCoinCalc,
     }).returning();
 
-    const currentXp = Number(charCheck.xp ?? charCheck.exp ?? 0);
-    const currentLevel = Number(charCheck.level ?? 1);
-    const currentWeeklyXp = Number(charCheck.weekly_xp ?? charCheck.weeklyXp ?? 0);
-    const currentCoins = Number(charCheck.gym_coins ?? charCheck.gymCoins ?? 0);
-    const charClass = String(charCheck.class || "fighter");
-
-    const lv = processLevelUp(currentXp, currentLevel, finalXpAwarded);
     const stats = calcStats(lv.newLevel, charClass);
-    const newLeague = calcLeague(currentWeeklyXp + finalXpAwarded);
+    const newLeague = calcLeague(currentWeeklyXp + effectiveXpEarned);
 
     let updated: any;
     try {
@@ -868,9 +881,10 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
         level: lv.newLevel,
         tier: calcTierByLevel(lv.newLevel),
         league: newLeague,
-        weeklyXp: sql`${charactersTable.weeklyXp} + ${finalXpAwarded}`,
+        weeklyXp: sql`${charactersTable.weeklyXp} + ${effectiveXpEarned}`,
         gymCoins: currentCoins,
         lastWorkoutAt: now,
+        lastWorkoutDate: now,
         ...stats,
         updatedAt: now,
       }).where(eq(charactersTable.userId, userId)).returning();
@@ -878,7 +892,7 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
     } catch (updateErr) {
       console.error("characters update failed after workout", {
         userId,
-        finalXpAwarded,
+        finalXpAwarded: effectiveXpEarned,
         nextLevel: lv.newLevel,
         newExp: lv.newExp,
         sqlState: (updateErr as any)?.cause?.code ?? (updateErr as any)?.code,
@@ -891,7 +905,7 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
     if (!updated) {
       console.error("characters update returned no row", {
         userId,
-        finalXpAwarded,
+        finalXpAwarded: effectiveXpEarned,
         nextLevel: lv.newLevel,
         newExp: lv.newExp,
       });
@@ -899,7 +913,7 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
     }
     console.info("characters xp persisted", {
       userId,
-      xpDelta: finalXpAwarded,
+      xpDelta: effectiveXpEarned,
       level: updated.level,
       xp: updated.xp,
       gymCoins: updated.gymCoins,
@@ -908,10 +922,12 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
     return {
       workout, updatedChar: updated, leveledUp: lv.leveledUp, newLevel: lv.newLevel,
       spamPenalty, xpReductionApplied: spamPenalty || serverValidation.spamDetected || isDuplicate || softCapResult.capApplied !== null,
-      warnings, warningsJson, streakResult, finalXP: finalXpAwarded, rawXp, boostedXp, classMasteryBonusXp,
+      warnings, warningsJson, streakResult, finalXP: effectiveXpEarned, rawXp, boostedXp, classMasteryBonusXp,
       rawCoinCalc, charLevel: lv.newLevel,
       currentCoins: charCheck.gym_coins || 0, currentGems: charCheck.gems || 0,
       tz, equipmentMultiplier, physicallyImpossible,
+      dailyTurboApplied: lv.dailyTurboApplied,
+      xpBeforeDailyTurbo: finalXpAwarded,
     };
   });
 
@@ -1138,6 +1154,7 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
 
   const freshChar = updatedChar ? await db.select().from(charactersTable).where(eq(charactersTable.userId, userId)).then(r => r[0] || updatedChar) : updatedChar;
   const freshExpToNextLevel = calcExpToNextLevel(freshChar?.level || 1);
+  const charTzResp = freshChar?.timezone || "Europe/Istanbul";
 
   res.json({
     workout,
@@ -1156,12 +1173,23 @@ router.post("/workouts", authenticateUser, rateLimiter, workoutRateLimiter, vali
       ? "Analiz Ediliyor: Supheli Aktivite"
       : "Verified Workout",
     healthSource: source,
+    dailyTurboApplied: Boolean(txResult.dailyTurboApplied),
+    xpBeforeDailyTurbo: txResult.xpBeforeDailyTurbo,
     character: freshChar
       ? {
           ...freshChar,
           expToNextLevel: freshExpToNextLevel,
           streakActive,
           league: calcLeague(Number((freshChar as any).weeklyXp ?? (freshChar as any).weekly_xp ?? 0)),
+          isTurboActive: isDailyTurboEligible(
+            (freshChar as any).lastWorkoutDate ?? (freshChar as any).last_workout_date,
+            (freshChar as any).lastWorkoutAt ?? (freshChar as any).last_workout_at,
+            String(charTzResp),
+            new Date(),
+          ),
+          equippedShakerTier: Number(
+            (freshChar as any).equippedShakerTier ?? (freshChar as any).equipped_shaker_tier ?? 0,
+          ),
         }
       : null,
     leveledUp,
@@ -1314,22 +1342,47 @@ router.post("/workout/complete", authenticateUser, rateLimiter, workoutRateLimit
       const currentWeeklyXp = Number(char.weekly_xp ?? char.weeklyXp ?? 0);
       const charClass = String(char.class || "fighter");
 
-      const lv = processLevelUp(currentXp, currentLevel, xpGained);
+      const turboEligible = isDailyTurboEligible(
+        char.last_workout_date ?? char.lastWorkoutDate,
+        char.last_workout_at ?? char.lastWorkoutAt,
+        tz,
+        now,
+      );
+      const lv = processLevelUp(currentXp, currentLevel, xpGained, {
+        applyDailyTurbo: turboEligible && xpGained > 0,
+      });
+      const effectiveSessionXp = lv.effectiveXpGained;
+      if (lv.dailyTurboApplied) {
+        spamWarnings.push("Gunluk turbo: Ilk antrenman — +%10 XP");
+      }
+
       const stats = calcStats(lv.newLevel, charClass);
-      const newLeague = calcLeague(currentWeeklyXp + xpGained);
+      const newLeague = calcLeague(currentWeeklyXp + effectiveSessionXp);
 
       const [updated] = await tx.update(charactersTable).set({
         xp: lv.newExp,
         level: lv.newLevel,
         tier: calcTierByLevel(lv.newLevel),
         league: newLeague,
-        weeklyXp: sql`${charactersTable.weeklyXp} + ${xpGained}`,
+        weeklyXp: sql`${charactersTable.weeklyXp} + ${effectiveSessionXp}`,
         lastWorkoutAt: now,
+        lastWorkoutDate: now,
         ...stats,
         updatedAt: now,
       }).where(eq(charactersTable.userId, userId)).returning();
 
-      return { updated, leveledUp: lv.leveledUp, xpGained, spamWarnings, xpResult, streakResult, finalResult, tz, totalSets, durationMinutes };
+      return {
+        updated,
+        leveledUp: lv.leveledUp,
+        xpGained: effectiveSessionXp,
+        spamWarnings,
+        xpResult,
+        streakResult,
+        finalResult,
+        tz,
+        totalSets,
+        durationMinutes,
+      };
     });
 
     let questsCompleted: string[] = [];

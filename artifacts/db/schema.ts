@@ -27,6 +27,11 @@ export const charactersTable = pgTable("characters", {
   eliteTierUntil: timestamp("elite_tier_until"),
   tier: text("tier").notNull().default("common"),
   hasAcceptedDisclaimer: boolean("has_accepted_disclaimer").notNull().default(false),
+  lastWorkoutAt: timestamp("last_workout_at"),
+  /** Takvim günü bazlı günlük turbo (ilk antrenman) kontrolü için son antrenman zamanı */
+  lastWorkoutDate: timestamp("last_workout_date"),
+  /** Kuplu (shaker) görünüm / bonus katmanı için ekipman seviyesi (0 = yok) */
+  equippedShakerTier: integer("equipped_shaker_tier").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
