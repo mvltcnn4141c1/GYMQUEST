@@ -28,11 +28,6 @@ try {
   await client.query(migration);
   console.log("[1] Migration SQL uygulandi:", migrationPath);
 
-  await client.query(`
-    ALTER TABLE characters
-    ADD COLUMN IF NOT EXISTS last_workout_at timestamptz
-  `);
-
   const check = await client.query(`
     SELECT column_name, data_type, is_nullable, column_default
     FROM information_schema.columns
@@ -80,7 +75,7 @@ try {
     }
   }
 
-  console.log("[OK] Her iki sutun da public.characters uzerinde mevcut.");
+  console.log("[OK] Shaker/turbo sutunlari public.characters uzerinde mevcut.");
 } finally {
   await client.end();
 }
