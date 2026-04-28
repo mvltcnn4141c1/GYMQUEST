@@ -48,6 +48,21 @@ async function main() {
 
   await pool.query(`
     ALTER TABLE public.characters
+    ADD COLUMN IF NOT EXISTS last_workout_at TIMESTAMP;
+  `);
+
+  await pool.query(`
+    ALTER TABLE public.characters
+    ADD COLUMN IF NOT EXISTS last_workout_date TIMESTAMP;
+  `);
+
+  await pool.query(`
+    ALTER TABLE public.characters
+    ADD COLUMN IF NOT EXISTS equipped_shaker_tier INTEGER NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE public.characters
     ADD COLUMN IF NOT EXISTS league TEXT NOT NULL DEFAULT 'iron';
   `);
 
